@@ -199,7 +199,7 @@ class up_layer(BaseModule):
             x_out += shortcut
         x_out = self.conv_out(x_out)
 
-        # x_out = x1 + x2
+
 
         x1 = rearrange(x1, 'b c h w -> b c (h w)')
 
@@ -207,22 +207,15 @@ class up_layer(BaseModule):
         x1 = rearrange(x1, 'b c n -> b n c')
 
         x_matrix = torch.matmul(x1, x2)
-        # x_gap = self.GAP_1(x_matrix)
-        # x_matrix = x_matrix - x_gap
 
-        # x_matrix = rearrange(x_matrix,' b c (h1 w) -> b c h1 w', h1=height)
 
         _x_gap = reduce(x_matrix, 'b c n -> b () n ', 'max')
 
         x_matrix = x_matrix - _x_gap
 
-        # _x_gap = rearrange(_x_gap, 'b c (h1 w) -> b c h1 w', h1=height)
 
-        #
         x_sig1 = self.tanh(x_matrix)
-        # x_sig = self.sig(_x_gap)
-        # x_sig = self.sig(x_matrix)
-        # x_refine = rearrange(x_sig1, 'b c (h1 w) -> b c h1 w', h1=height)
+
         #
         #
         x_out_re = rearrange(x_out, 'b c h w -> b c (h w)')
@@ -314,23 +307,22 @@ class VOV(BaseModule):
             ConvModule(256, 256, 3, padding=5, dilation=5, conv_cfg=conv_cfg, norm_cfg=norm_cfg, act_cfg=act_cfg,
                        inplace=False))
 
-        #         self.conv_out = ConvModule(1280, 256, kernel_size=3, stride=1, padding=1, conv_cfg=None, norm_cfg=norm_cfg,
-        #                                    act_cfg=act_cfg)
+
 
         up_list = [up_layer(512, 256, deploy=deploy, drop_path_rate=self.drop_path_rate * i / 4) for i in range(4)]
         self.upRep = nn.Sequential(*up_list)
 
-        # conv_list = [ConvModule(512, 2, kernel_size=3, stride=1, padding=1, conv_cfg=None, norm_cfg=norm_cfg,
-        #                         act_cfg=act_cfg) for i in range(4)]
-        # self.conv = nn.Sequential(*conv_list)
-        # #
-        # self.GAP = nn.AdaptiveAvgPool2d(1)
+        conv_list = [ConvModule(512, 2, kernel_size=3, stride=1, padding=1, conv_cfg=None, norm_cfg=norm_cfg,
+                                act_cfg=act_cfg) for i in range(4)]
+        self.conv = nn.Sequential(*conv_list)
         #
-        # self.conv_out = ConvModule(1280, 256, kernel_size=1, stride=1, conv_cfg=None, norm_cfg=norm_cfg,
-        #                            act_cfg=dict(type='ReLU'))
-        #
-        # self.conv_out1 = ConvModule(1280, 1280, kernel_size=3, stride=1, padding=1, conv_cfg=None, norm_cfg=norm_cfg,
-        #                             act_cfg=act_cfg)
+        self.GAP = nn.AdaptiveAvgPool2d(1)
+
+        self.conv_out = ConvModule(1280, 256, kernel_size=1, stride=1, conv_cfg=None, norm_cfg=norm_cfg,
+                                   act_cfg=dict(type='ReLU'))
+
+        self.conv_out1 = ConvModule(1280, 1280, kernel_size=3, stride=1, padding=1, conv_cfg=None, norm_cfg=norm_cfg,
+                                    act_cfg=act_cfg)
 
     def forward(self, inputs):
         """GSCONV+VOV"""
@@ -360,31 +352,31 @@ class VOV(BaseModule):
             self.fpn_convs[i](laterals[i]) for i in range(used_backbone_levels)
         ]
 
-        # feats = []
-        # feats.append(inter_outs[0])
-        # gather_size = inputs[self.refine_level].size()[2:]
-        # for i in range(1, len(laterals)):
-        #     h_feat_o = inter_outs[i]
-        #     h_feat = F.interpolate(
-        #         inter_outs[i], size=gather_size, mode='bilinear', align_corners=False)
-        #     flow = self.conv[i - 1](torch.cat([h_feat, inter_outs[0]], 1))
-        #     gathered = self.flow_warp(h_feat_o, flow, size=gather_size)
+        feats = []
+        feats.append(inter_outs[0])
+        gather_size = inputs[self.refine_level].size()[2:]
+        for i in range(1, len(laterals)):
+            h_feat_o = inter_outs[i]
+            h_feat = F.interpolate(
+                inter_outs[i], size=gather_size, mode='bilinear', align_corners=False)
+            flow = self.conv[i - 1](torch.cat([h_feat, inter_outs[0]], 1))
+            gathered = self.flow_warp(h_feat_o, flow, size=gather_size)
+
+            feats.append(gathered)
+
+        outs_3 = torch.cat(feats, dim=1)
+
+
+
         #
-        #     feats.append(gathered)
+        outs_3 = self.conv_out1(outs_3)
+        outs_3 = self.GAP(outs_3)
+        outs_3 = self.conv_out(outs_3)
         #
-        # outs_3 = torch.cat(feats, dim=1)
-        #
-        #
-        #
-        # #
-        # outs_3 = self.conv_out1(outs_3)
-        # outs_3 = self.GAP(outs_3)
-        # outs_3 = self.conv_out(outs_3)
-        # #
-        #
-        #
-        # for i in range(len(laterals)):
-        #     inter_outs[i] = inter_outs[i] * outs_3 + inter_outs[i]
+
+
+        for i in range(len(laterals)):
+            inter_outs[i] = inter_outs[i] * outs_3 + inter_outs[i]
 
         return tuple(inter_outs)
 
